@@ -71,6 +71,23 @@ public func winRenderAnyView(_ view: any View, in context: RenderContext) -> HWN
 // MARK: - Stateful view rendering
 
 private func winRenderStatefulView<V: View>(_ view: V, in context: RenderContext) -> HWND? {
+    // Positional state reconciliation: when the owning host rebuilds, this
+    // view is constructed again with brand-new storages. Restore the previous
+    // pass's values (matched by render position + type) so nested state
+    // survives parent rebuilds, as in SwiftUI and the GTK4 backend.
+    if let parentHost = Win32ViewHost.current {
+        let key = parentHost.nextChildKey(type: String(describing: V.self))
+        let providers = Mirror(reflecting: view).children.compactMap {
+            $0.value as? AnyStateStorageProvider
+        }
+        if let cached = parentHost.childStateCache[key], cached.count == providers.count {
+            for (provider, old) in zip(providers, cached) {
+                provider.anyStorage.restoreValue(from: old)
+            }
+        }
+        parentHost.childStateCache[key] = providers.map { $0.anyStorage }
+    }
+
     let host = Win32ViewHost(
         context: context,
         buildBody: { ctx in
@@ -5233,8 +5250,12 @@ extension ConfirmationDialogView: WinRenderable {
 
 extension Form: WinRenderable {
     public func winCreateWidget(in context: RenderContext) -> HWND? {
-        // Form renders as a VStack with padding — visual grouping for controls
-        let formView = VStack(alignment: .leading, spacing: 8) { content }.padding()
+        // Form renders as a VStack with padding — visual grouping for controls.
+        // Like SwiftUI's Form it takes the available width, so a Form next to
+        // a Spacer in an HStack isn't squeezed to its content.
+        let formView = VStack(alignment: .leading, spacing: 8) { content }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
         return winRenderView(formView, in: context)
     }
 }
@@ -5941,7 +5962,10 @@ extension ToolbarView: WinRenderable {
 
         for item in items {
             guard let itemHwnd = winRenderAnyView(item.wrapped, in: headerContext) else { continue }
-            SetPropW(itemHwnd, toolbarItemPropName, HANDLE(bitPattern: 1))
+            // The prop marks a toolbar item and records its side, so the header
+            // layout can place it again with the header's real width.
+            SetPropW(itemHwnd, toolbarItemPropName,
+                     HANDLE(bitPattern: item.placement == .leading ? toolbarLeadingMark : toolbarTrailingMark))
             var r = RECT()
             GetWindowRect(itemHwnd, &r)
             let w = r.right - r.left
@@ -5974,14 +5998,60 @@ private let toolbarItemPropName: UnsafePointer<WCHAR> = {
     }
 }()
 
+private let toolbarLeadingMark = 1
+private let toolbarTrailingMark = 2
+
+/// Removes the toolbar items of the view on top (the visible ones). Hidden
+/// items belong to views further down the navigation stack.
 private func clearToolbarItems(from container: HWND) {
-    var toRemove: [HWND] = []
-    var child = GetWindow(container, UINT(GW_CHILD))
+    for hwnd in win32ToolbarItemWindows(in: container) where win32HasVisibleStyle(hwnd) {
+        DestroyWindow(hwnd)
+    }
+}
+
+/// Whether the window itself is marked visible (independent of its parents).
+private func win32HasVisibleStyle(_ hwnd: HWND) -> Bool {
+    (DWORD(bitPattern: GetWindowLongW(hwnd, GWL_STYLE)) & DWORD(WS_VISIBLE)) != 0
+}
+
+/// The toolbar item windows in a navigation header.
+func win32ToolbarItemWindows(in header: HWND) -> [HWND] {
+    var items: [HWND] = []
+    var child = GetWindow(header, UINT(GW_CHILD))
     while let c = child {
-        if GetPropW(c, toolbarItemPropName) != nil { toRemove.append(c) }
+        if GetPropW(c, toolbarItemPropName) != nil { items.append(c) }
         child = GetWindow(c, UINT(GW_HWNDNEXT))
     }
-    for hwnd in toRemove { DestroyWindow(hwnd) }
+    return items
+}
+
+/// Places the visible toolbar items of a navigation header: leading items from
+/// `leadingStart` rightwards, trailing items from the right edge leftwards.
+/// Returns where the leading items end and the trailing items start.
+func win32LayoutToolbarItems(in header: HWND, leadingStart: Int32) -> (leadingEnd: Int32, trailingStart: Int32) {
+    let itemTop = px(2, for: header), itemH = px(24, for: header), gap = px(4, for: header)
+    var headerRect = RECT()
+    GetClientRect(header, &headerRect)
+    var leadingX = leadingStart
+    var trailing: [(hwnd: HWND, width: Int32)] = []
+    for hwnd in win32ToolbarItemWindows(in: header) where win32HasVisibleStyle(hwnd) {
+        var r = RECT()
+        GetWindowRect(hwnd, &r)
+        let w = r.right - r.left
+        if Int(bitPattern: GetPropW(hwnd, toolbarItemPropName)) == toolbarLeadingMark {
+            SetWindowPos(hwnd, nil, leadingX, itemTop, w, itemH, UINT(SWP_NOZORDER))
+            leadingX += w + gap
+        } else {
+            trailing.append((hwnd: hwnd, width: w))
+        }
+    }
+    var trailingX = headerRect.right - headerRect.left - gap
+    for item in trailing.reversed() {
+        trailingX -= item.width
+        SetWindowPos(item.hwnd, nil, trailingX, itemTop, item.width, itemH, UINT(SWP_NOZORDER))
+        trailingX -= gap
+    }
+    return (leadingEnd: leadingX, trailingStart: trailingX + gap)
 }
 
 extension ToolbarItem: WinRenderable {

@@ -78,6 +78,28 @@ public class Win32ViewHost: AnyViewHost, DependencyTrackingHost {
     /// The root window to post rebuild messages to.
     private var rootWindow: HWND?
 
+    /// The host whose body is being evaluated (initial render or rebuild).
+    /// Views rendered during that evaluation belong to this host.
+    static var current: Win32ViewHost?
+
+    /// Positional cache of nested stateful children's storages, so their
+    /// @State / @StateObject survive a rebuild of this host (the rebuild
+    /// constructs the child views again with new storages). Keyed by
+    /// "<render-order index>:<view type>", as in the GTK4 view host.
+    var childStateCache: [String: [AnyStateStorage]] = [:]
+
+    /// Pushed entries of the NavigationStacks in this host's body, by the same
+    /// positional key, so a rebuild re-opens them instead of resetting to root.
+    var navigationMemory: [String: Win32NavigationMemory] = [:]
+
+    private var childCounter = 0
+
+    /// Next positional key for a child rendered during the current body pass.
+    func nextChildKey(type: String) -> String {
+        defer { childCounter += 1 }
+        return "\(childCounter):\(type)"
+    }
+
     public init(context: RenderContext,
                 buildBody: @escaping (RenderContext) -> HWND?,
                 describeBody: @escaping () -> Win32DescriptorNode) {
@@ -200,6 +222,12 @@ public class Win32ViewHost: AnyViewHost, DependencyTrackingHost {
 
     /// Build the body with observation tracking for @Observable support.
     public func buildBodyWithTracking(_ context: RenderContext) -> HWND? {
+        // Views rendered while the body evaluates belong to this host.
+        let previousHost = Win32ViewHost.current
+        Win32ViewHost.current = self
+        childCounter = 0
+        defer { Win32ViewHost.current = previousHost }
+
         // Track `@Environment(Type.self)` reads so we can re-push the
         // same objects into env on rebuild even if the pushing
         // modifier lives below us in the render tree. Pairs with

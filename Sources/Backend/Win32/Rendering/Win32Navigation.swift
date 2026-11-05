@@ -10,6 +10,18 @@ import Foundation
 struct Win32NavigationEntry {
     let title: String
     let hwnd: HWND
+    /// Toolbar items this entry put in the header; shown only while it is on top.
+    var toolbarWindows: [HWND] = []
+}
+
+/// Re-pushes one entry of a navigation stack onto a new context.
+typealias Win32NavigationRestore = (Win32NavigationContext) -> Void
+
+/// The pushed entries of a NavigationStack, kept by the owning view host so
+/// that the stack survives a rebuild of the view that contains it (a rebuild
+/// creates a new stack with only the root).
+final class Win32NavigationMemory {
+    var entries: [Win32NavigationRestore] = []
 }
 
 /// Manages the navigation stack state for Win32.
@@ -37,6 +49,9 @@ class Win32NavigationContext {
     var pathBinding: Binding<NavigationPath>?
     private var isSyncing = false
 
+    /// Pushed entries kept across rebuilds, when the stack has an owning view host.
+    var memory: Win32NavigationMemory?
+
     init(container: HWND, headerContainer: HWND, titleLabel: HWND,
          backButton: HWND, contentArea: HWND, hInstance: HINSTANCE) {
         self.container = container
@@ -53,11 +68,20 @@ class Win32NavigationContext {
     }
 
     /// Push a new view onto the navigation stack.
-    func push(title: String, content: @escaping () -> HWND?) {
-        // Hide current top
+    ///
+    /// `restore` re-creates this entry on a new context after a rebuild; pass it
+    /// when calling `content` again would not reproduce the entry.
+    func push(title: String, restore: Win32NavigationRestore? = nil, content: @escaping () -> HWND?) {
+        memory?.entries.append(restore ?? { context in
+            context.push(title: title, content: content)
+        })
+
+        // Hide current top, with its toolbar items
         if let top = entries.last {
             ShowWindow(top.hwnd, SW_HIDE)
+            for item in top.toolbarWindows { ShowWindow(item, SW_HIDE) }
         }
+        let toolbarBefore = Set(win32ToolbarItemWindows(in: headerContainer))
 
         setCurrentNavigationContext(self)
         let prevEnv = getCurrentEnvironment()
@@ -84,7 +108,9 @@ class Win32NavigationContext {
                      rect.right - rect.left, rect.bottom - rect.top,
                      UINT(SWP_NOZORDER))
 
-        entries.append(Win32NavigationEntry(title: title, hwnd: childHwnd))
+        // Toolbar items the pushed view added to the header belong to it.
+        let toolbarWindows = win32ToolbarItemWindows(in: headerContainer).filter { !toolbarBefore.contains($0) }
+        entries.append(Win32NavigationEntry(title: title, hwnd: childHwnd, toolbarWindows: toolbarWindows))
         updateHeader()
     }
 
@@ -93,7 +119,7 @@ class Win32NavigationContext {
         guard let factory = destinationRegistry.resolve(value) else { return }
         let title = String(describing: value.base)
 
-        push(title: title) {
+        push(title: title, restore: { context in context.pushValue(value) }) {
             factory()
         }
         syncPathAfterPush(value)
@@ -102,13 +128,18 @@ class Win32NavigationContext {
     /// Pop the top view from the navigation stack.
     func pop() {
         guard entries.count > 1 else { return }
+        if memory?.entries.isEmpty == false {
+            memory?.entries.removeLast()
+        }
 
         let removed = entries.removeLast()
+        for item in removed.toolbarWindows { DestroyWindow(item) }
         DestroyWindow(removed.hwnd)
 
-        // Show previous
+        // Show previous, with its toolbar items
         if let top = entries.last {
             ShowWindow(top.hwnd, SW_SHOW)
+            for item in top.toolbarWindows { ShowWindow(item, SW_SHOW) }
         }
 
         updateHeader()
@@ -219,12 +250,32 @@ private func win32ExtractTitleAny(from view: Any, depth: Int = 0) -> String {
         }
     }
     for child in mirror.children {
-        if child.value is any View {
+        // Views, and the tuples/arrays a ViewBuilder stores several views in.
+        if child.value is any View || win32IsViewContainer(child.value) {
             let result = win32ExtractTitleAny(from: child.value, depth: depth + 1)
             if !result.isEmpty { return result }
         }
     }
+    // A composite view (e.g. a destination `TaskDetailView`) sets its title in
+    // its body: look there too.
+    if let view = view as? any View, let body = win32CompositeBody(of: view) {
+        return win32ExtractTitleAny(from: body, depth: depth + 1)
+    }
     return ""
+}
+
+/// Whether a stored value is a tuple or array a ViewBuilder keeps views in.
+private func win32IsViewContainer(_ value: Any) -> Bool {
+    let style = Mirror(reflecting: value).displayStyle
+    return style == .tuple || style == .collection
+}
+
+/// The body of a composite view, or nil for primitive views.
+private func win32CompositeBody<V: View>(of view: V) -> Any? {
+    if view is any PrimitiveView || V.Body.self == Never.self {
+        return nil
+    }
+    return view.body
 }
 
 // MARK: - Window classes
@@ -335,8 +386,14 @@ private func layoutNavContainer(_ ctx: Win32NavigationContext) {
     if backVisible {
         SetWindowPos(ctx.backButton, nil, inset, inset, backWidth - 2 * inset, headerHeight - 2 * inset, UINT(SWP_NOZORDER))
     }
-    SetWindowPos(ctx.titleLabel, nil, backWidth + inset, 0,
-                 w - backWidth - 2 * inset, headerHeight, UINT(SWP_NOZORDER))
+    // Toolbar items are placed here, with the header's real width: when they
+    // are rendered the header is still zero-wide, so trailing items would end
+    // up off-screen. The title takes the space between them.
+    let toolbar = win32LayoutToolbarItems(in: ctx.headerContainer, leadingStart: backWidth + inset)
+    let titleLeft = toolbar.leadingEnd
+    let titleRight = toolbar.trailingStart
+    SetWindowPos(ctx.titleLabel, nil, titleLeft, 0,
+                 max(titleRight - titleLeft, 0), headerHeight, UINT(SWP_NOZORDER))
 
     // Content area fills the rest
     SetWindowPos(ctx.contentArea, nil, 0, headerHeight, w, h - headerHeight, UINT(SWP_NOZORDER))
@@ -353,6 +410,13 @@ extension NavigationStack: WinRenderable {
     public func winCreateWidget(in context: RenderContext) -> HWND? {
         registerNavClassIfNeeded(hInstance: context.hInstance)
         registerStackClassIfNeeded(hInstance: context.hInstance)
+
+        // The owning view host keeps this stack's pushed entries by render
+        // position, so a rebuild of the containing view re-opens them. The key
+        // is taken before the content renders, so it doesn't depend on how
+        // many stateful children the content has.
+        let owner = Win32ViewHost.current
+        let memoryKey = owner?.nextChildKey(type: "NavigationStack")
 
         // Main container
         let container = CreateWindowExW(
@@ -486,7 +550,9 @@ extension NavigationStack: WinRenderable {
             SetWindowPos(rootHwnd, nil, 0, 0,
                          caRect.right, caRect.bottom, UINT(SWP_NOZORDER))
 
-            navCtx.entries.append(Win32NavigationEntry(title: title, hwnd: rootHwnd))
+            navCtx.entries.append(Win32NavigationEntry(
+                title: title, hwnd: rootHwnd,
+                toolbarWindows: win32ToolbarItemWindows(in: headerContainer)))
             // Propagate the root content's expansion so the stack fills
             // its available space. This is root-only: push() sizes a
             // destination inside the existing content area and does not
@@ -500,6 +566,21 @@ extension NavigationStack: WinRenderable {
         let titleText = title.isEmpty ? "Home" : title
         _ = titleText.withCString(encodedAs: UTF16.self) { wstr in
             SetWindowTextW(titleLabel, wstr)
+        }
+
+        // Re-open the entries pushed before a rebuild. A path-bound stack has
+        // no memory restore (its path is its state).
+        if let owner, let memoryKey {
+            let memory = owner.navigationMemory[memoryKey] ?? Win32NavigationMemory()
+            owner.navigationMemory[memoryKey] = memory
+            let remembered = memory.entries
+            memory.entries = []
+            navCtx.memory = memory
+            if pathBinding == nil, !navCtx.entries.isEmpty {
+                for restore in remembered {
+                    restore(navCtx)
+                }
+            }
         }
 
         return container
@@ -544,12 +625,21 @@ extension NavigationLink: WinRenderable {
 
         // Destination-based NavigationLink
         let dest = self.destination
+        // Pushes the destination onto a context; also how the entry is
+        // re-created after a rebuild, so its title is re-read then.
+        func pushDestination(on navCtx: Win32NavigationContext) {
+            let destView = dest()
+            let extracted = win32ExtractTitle(from: destView)
+            let title = extracted.isEmpty ? destTitle : extracted
+            navCtx.push(title: title, restore: { pushDestination(on: $0) }) { [weak navCtx] in
+                guard let navCtx = navCtx else { return nil }
+                let destContext = RenderContext(parent: navCtx.contentArea, hInstance: hInst)
+                return winRenderView(destView, in: destContext)
+            }
+        }
         let action = bindActionToCurrentEnvironment { [weak navCtx] in
             guard let navCtx = navCtx else { return }
-            navCtx.push(title: destTitle) {
-                let destContext = RenderContext(parent: navCtx.contentArea, hInstance: hInst)
-                return winRenderView(dest(), in: destContext)
-            }
+            pushDestination(on: navCtx)
         }
         if label.isEmpty {
             return createCustomLabelButton(label: labelView, action: action, context: context)
