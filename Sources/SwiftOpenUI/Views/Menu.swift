@@ -98,6 +98,11 @@ public struct MenuBuilder {
         [.submenu(label: submenu.label, children: submenu.children)]
     }
 
+    /// SwiftUI's `.contextMenu { Button("Delete") { ... } }`: a button becomes a menu item.
+    public static func buildExpression<L: View>(_ button: Button<L>) -> [MenuElement] {
+        [.item(label: menuItemLabelText(from: button.label), action: button.action)]
+    }
+
     public static func buildOptional(_ elements: [MenuElement]?) -> [MenuElement] {
         elements ?? []
     }

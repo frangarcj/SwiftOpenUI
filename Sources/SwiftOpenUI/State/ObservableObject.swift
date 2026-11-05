@@ -91,7 +91,26 @@ public struct ObservedObject<ObjectType: ObservableObject>: AnyStateStorageProvi
         storage.object
     }
 
+    /// `$object.property` is a `Binding` to that property (SwiftUI parity).
+    public var projectedValue: Wrapper { Wrapper(root: storage.object) }
+
     public var anyStorage: AnyStateStorage { storage }
+
+    /// Projects bindings to the properties of an observable object.
+    @dynamicMemberLookup
+    public struct Wrapper {
+        let root: ObjectType
+
+        public subscript<Subject>(
+            dynamicMember keyPath: ReferenceWritableKeyPath<ObjectType, Subject>
+        ) -> Binding<Subject> {
+            let root = self.root
+            return Binding(
+                get: { root[keyPath: keyPath] },
+                set: { root[keyPath: keyPath] = $0 }
+            )
+        }
+    }
 }
 
 /// Backing storage for @ObservedObject. Conforms to AnyStateStorage so
@@ -130,6 +149,8 @@ public struct StateObject<ObjectType: ObservableObject>: AnyStateStorageProvider
     }
 
     public var wrappedValue: ObjectType { storage.object }
+    /// `$object.property` is a `Binding` to that property (SwiftUI parity).
+    public var projectedValue: ObservedObject<ObjectType>.Wrapper { .init(root: storage.object) }
     public var anyStorage: AnyStateStorage { storage }
 }
 
@@ -159,7 +180,12 @@ public class StateObjectStorage<ObjectType: ObservableObject>: AnyStateStorage {
     }
 
     public func restoreValue(from other: AnyStateStorage) {
-        // StateObject owns its object — no value to restore
+        // A parent rebuild constructs this view again with a new storage; keep
+        // the object created by the previous one instead of calling the factory
+        // again (SwiftUI keeps a @StateObject for the view's lifetime).
+        if let previous = other as? StateObjectStorage<ObjectType>, let object = previous._object {
+            _object = object
+        }
     }
 }
 
@@ -176,6 +202,8 @@ public struct EnvironmentObject<ObjectType: ObservableObject>: AnyStateStoragePr
     }
 
     public var wrappedValue: ObjectType { storage.object }
+    /// `$object.property` is a `Binding` to that property (SwiftUI parity).
+    public var projectedValue: ObservedObject<ObjectType>.Wrapper { .init(root: storage.object) }
     public var anyStorage: AnyStateStorage { storage }
 }
 

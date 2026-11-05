@@ -31,5 +31,21 @@ public struct Section<Content: View>: View {
         self.headerView = nil
     }
 
+    /// SwiftUI's `Section(header: Text("..."))` form, with a view-typed header.
+    public init<H: View>(header: H, @ViewBuilder content: () -> Content) {
+        self.header = (header as? Text)?.content
+        self.footer = nil
+        self.content = content()
+        self.headerView = header is Text ? nil : AnyView(header)
+    }
+
+    /// SwiftUI's `Section(header: Text("..."), footer: Text("..."))` form.
+    public init<H: View, F: View>(header: H, footer: F, @ViewBuilder content: () -> Content) {
+        self.header = (header as? Text)?.content
+        self.footer = (footer as? Text)?.content
+        self.content = content()
+        self.headerView = header is Text ? nil : AnyView(header)
+    }
+
     public var body: Never { fatalError("Section is a primitive view") }
 }

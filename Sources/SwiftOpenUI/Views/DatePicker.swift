@@ -43,5 +43,43 @@ public struct DatePicker: View {
         self.onChange = onChange
     }
 
+    /// SwiftUI's `DatePicker(_:selection:displayedComponents:)` over a `Date`.
+    ///
+    /// The native widgets pick a calendar day, so only the day part of the
+    /// date is edited; the time of day of the bound date is kept.
+    public init(
+        _ title: String = "",
+        selection: Binding<Date>,
+        displayedComponents: DatePickerComponents = [.date, .hourAndMinute]
+    ) {
+        let calendar = Calendar.current
+        let day = Binding<DateComponents>(
+            get: {
+                let parts = calendar.dateComponents([.year, .month, .day], from: selection.wrappedValue)
+                return DateComponents(year: parts.year ?? 1970, month: parts.month ?? 1, day: parts.day ?? 1)
+            },
+            set: { newDay in
+                var parts = calendar.dateComponents(
+                    [.year, .month, .day, .hour, .minute, .second], from: selection.wrappedValue)
+                parts.year = newDay.year
+                parts.month = newDay.month
+                parts.day = newDay.day
+                if let date = calendar.date(from: parts) {
+                    selection.wrappedValue = date
+                }
+            }
+        )
+        self.init(title, selection: day)
+    }
+
     public var body: Never { fatalError("DatePicker is a primitive view") }
+}
+
+/// The parts of a date a `DatePicker` shows (SwiftUI parity).
+public struct DatePickerComponents: OptionSet, Sendable {
+    public let rawValue: UInt
+    public init(rawValue: UInt) { self.rawValue = rawValue }
+
+    public static let date = DatePickerComponents(rawValue: 1 << 0)
+    public static let hourAndMinute = DatePickerComponents(rawValue: 1 << 1)
 }
