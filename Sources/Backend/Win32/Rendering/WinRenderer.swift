@@ -8867,8 +8867,30 @@ extension ContextMenuView: WinRenderable {
         let statePtr = Unmanaged.passRetained(state).toOpaque()
         SetWindowSubclass(hwnd, contextMenuProc, contextMenuSubclassID,
                           DWORD_PTR(UInt(bitPattern: statePtr)))
+        win32Trace("context menu installed on \(win32ClassName(hwnd)) with \(menuElements.count) elements")
         return hwnd
     }
+}
+
+/// Appends a line to the file named by SWIFTOPENUI_TRACE_FILE, if set
+/// (diagnostics for UI behavior that is hard to observe, e.g. in CI).
+func win32Trace(_ message: String) {
+    guard let path = ProcessInfo.processInfo.environment["SWIFTOPENUI_TRACE_FILE"],
+          let data = (message + "\n").data(using: .utf8) else { return }
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        handle.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: data)
+    }
+}
+
+/// The window class name of a window, for diagnostics.
+func win32ClassName(_ hwnd: HWND) -> String {
+    var buffer = [WCHAR](repeating: 0, count: 256)
+    let length = GetClassNameW(hwnd, &buffer, 256)
+    return String(decoding: buffer.prefix(Int(length)), as: UTF16.self)
 }
 
 private let contextMenuProc: SUBCLASSPROC = { (hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) in
@@ -8888,13 +8910,21 @@ private let contextMenuProc: SUBCLASSPROC = { (hwnd, uMsg, wParam, lParam, uIdSu
 
         var pt = POINT()
         GetCursorPos(&pt)
-        // TrackPopupMenu dispatches WM_COMMAND synchronously to hwnd
-        // when an item is selected. Store actions on state so WM_COMMAND
-        // handler can look them up.
-        state.pendingActions = actions
-        _ = TrackPopupMenu(hmenu, 0, pt.x, pt.y, 0, hwnd, nil)
-        state.pendingActions = nil
+        // A popup menu needs its owner's window in the foreground to show and
+        // dismiss properly.
+        if let root = GetAncestor(hwnd, UINT(GA_ROOT)) {
+            SetForegroundWindow(root)
+        }
+        // TPM_RETURNCMD: the chosen item comes back as the return value. Without
+        // it the item's WM_COMMAND is posted and arrives after this returns,
+        // when the actions are gone, so choosing an item did nothing.
+        let flags = UINT(TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON)
+        let selected = TrackPopupMenu(hmenu, flags, pt.x, pt.y, 0, hwnd, nil)
+        win32Trace("context menu at (\(pt.x),\(pt.y)) items=\(actions.count) selected=\(selected) lastError=\(GetLastError())")
         DestroyMenu(hmenu)
+        if selected != 0, let action = actions[UINT(selected)] {
+            action()
+        }
         return 0
 
     case UINT(WM_COMMAND):
