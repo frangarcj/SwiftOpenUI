@@ -1,12 +1,24 @@
 // swift-tools-version: 5.10
 
+import CompilerPluginSupport
 import PackageDescription
 
 var targets: [Target] = [
     // Core framework (platform-independent)
     .target(
         name: "SwiftOpenUI",
+        dependencies: ["SwiftOpenUIMacros"],
         path: "Sources/SwiftOpenUI"
+    ),
+
+    // Macros of the core framework (`#Preview`).
+    .macro(
+        name: "SwiftOpenUIMacros",
+        dependencies: [
+            .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+            .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+        ],
+        path: "Sources/SwiftOpenUIMacros"
     ),
 
     // Small helper module for macOS example launch boilerplate.
@@ -366,12 +378,16 @@ targets += [
     ),
 ]
 
+let swiftSyntax: Package.Dependency = .package(
+    url: "https://github.com/swiftlang/swift-syntax.git", "600.0.0"..<"700.0.0")
+
 #if os(macOS)
 let deps: [Package.Dependency] = [
     .package(url: "https://github.com/swiftwasm/JavaScriptKit.git", from: "0.20.0"),
+    swiftSyntax,
 ]
 #else
-let deps: [Package.Dependency] = []
+let deps: [Package.Dependency] = [swiftSyntax]
 #endif
 
 // App bundle packaging plugin
