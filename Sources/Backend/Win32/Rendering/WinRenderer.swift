@@ -6443,7 +6443,8 @@ extension DatePicker: WinRenderable {
             var r = RECT()
             GetWindowRect(timeHwnd, &r)
             let timeW = r.right - r.left, timeH = r.bottom - r.top
-            let timeX = labelMeasured.width + px(8, for: context.parent)
+            // From the left edge (under the label): the combo boxes are wide.
+            let timeX: Int32 = 0
             let timeY = px(24, for: context.parent) + px(4, for: context.parent)
             SetWindowPos(timeHwnd, nil, timeX, timeY, timeW, timeH, UINT(SWP_NOZORDER))
             SetWindowPos(container, nil, 0, 0,
