@@ -7408,6 +7408,37 @@ private func gtkRenderStatefulView<V: View>(_ view: V) -> OpaquePointer {
 
     installState(view, host: host)
 
+    // Inside a host's tracked body pass, build the body after that pass
+    // (see gtkDeferStatefulBuild), with the render context of this point.
+    let environment = getCurrentEnvironment()
+    let navigationContext = getCurrentNavigationContext()
+    let foregroundColor = _gtkCurrentForegroundColor
+    let tagValue = getCurrentTagValue()
+    let animation = getCurrentAnimation()
+    let deferred = gtkDeferStatefulBuild {
+        let saved = (getCurrentEnvironment(), getCurrentNavigationContext(),
+                     _gtkCurrentForegroundColor, getCurrentTagValue(), getCurrentAnimation())
+        setCurrentEnvironment(environment)
+        setCurrentNavigationContext(navigationContext)
+        _gtkCurrentForegroundColor = foregroundColor
+        if let tagValue { setCurrentTagValue(tagValue) } else { clearCurrentTagValue() }
+        setCurrentAnimation(animation)
+        gtkBuildStatefulBody(view, host: host)
+        setCurrentEnvironment(saved.0)
+        setCurrentNavigationContext(saved.1)
+        _gtkCurrentForegroundColor = saved.2
+        if let tag = saved.3 { setCurrentTagValue(tag) } else { clearCurrentTagValue() }
+        setCurrentAnimation(saved.4)
+    }
+    if !deferred {
+        gtkBuildStatefulBody(view, host: host)
+    }
+    return opaqueFromWidget(host.container)
+}
+
+/// Build a stateful view's body into its host's container, under the host's
+/// own observation and dependency tracking.
+private func gtkBuildStatefulBody<V: View>(_ view: V, host: GTKViewHost) {
     let previousHost = GTKViewHost.getCurrentRebuilding()
     GTKViewHost.setCurrentRebuilding(host)
     beginDependencyTracking()
@@ -7458,8 +7489,6 @@ private func gtkRenderStatefulView<V: View>(_ view: V) -> OpaquePointer {
         )
         host.retainedExecutor = executor
     }
-
-    return opaqueFromWidget(host.container)
 }
 
 // MARK: - Safe Area GTK extensions

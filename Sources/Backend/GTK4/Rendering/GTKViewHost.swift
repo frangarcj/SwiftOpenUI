@@ -13,6 +13,38 @@ private var rebuildingViewHostKey: pthread_key_t = {
     return key
 }()
 
+// MARK: - Stateful children built outside the parent's tracking
+
+/// `withObservationTracking` merges the reads of a nested tracking scope into
+/// the enclosing one. A stateful child view has its own host and its own
+/// tracking, but it is rendered while its parent's body is being tracked, so
+/// every @Observable property the child reads (its own view model, say) was
+/// also credited to the parent: a change that only the child cares about
+/// rebuilt the parent, which re-created the child and lost its navigation.
+///
+/// While a host tracks its body, stateful children are therefore only given
+/// their container; their bodies are built right after the parent's tracking
+/// closure returns, each under its own tracking — as SwiftUI scopes
+/// observation to the view that reads.
+private var gtkDeferredStatefulFrames: [[() -> Void]] = []
+
+/// Queue a stateful child's build for after the current host's tracked body
+/// pass. Returns false (and queues nothing) when no host is tracking.
+func gtkDeferStatefulBuild(_ build: @escaping () -> Void) -> Bool {
+    guard !gtkDeferredStatefulFrames.isEmpty else { return false }
+    gtkDeferredStatefulFrames[gtkDeferredStatefulFrames.count - 1].append(build)
+    return true
+}
+
+/// Run `body` collecting the stateful-child builds it queues, then return
+/// them for the caller to run outside its tracking scope.
+func gtkCollectingStatefulBuilds<T>(_ body: () -> T) -> (T, [() -> Void]) {
+    gtkDeferredStatefulFrames.append([])
+    let result = body()
+    let builds = gtkDeferredStatefulFrames.removeLast()
+    return (result, builds)
+}
+
 /// GTK4-specific ViewHost that manages a stable GtkBox container.
 /// On state change, rebuilds the body and swaps children.
 /// Preserves focus and cursor position across rebuilds.
@@ -208,8 +240,9 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
         #if canImport(Observation)
         if #available(macOS 14.0, iOS 17.0, *) {
             var result: OpaquePointer!
+            var childBuilds: [() -> Void] = []
             withObservationTracking {
-                result = buildBody()
+                (result, childBuilds) = gtkCollectingStatefulBuilds { buildBody() }
             } onChange: { [weak self] in
                 guard let self else { return }
                 self.lock.lock()
@@ -220,6 +253,8 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
             if let reads = endEnvironmentReadTracking() {
                 capturedInjectedObjects = reads
             }
+            // Stateful children: built now, outside this host's tracking.
+            for build in childBuilds { build() }
             return result
         }
         #endif
@@ -244,10 +279,12 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
     func trackDeferredChildRender(_ render: () -> OpaquePointer) -> OpaquePointer {
         beginDependencyTracking()
         var result: OpaquePointer!
+        var childBuilds: [() -> Void] = []
+        defer { for build in childBuilds { build() } }
         #if canImport(Observation)
         if #available(macOS 14.0, iOS 17.0, *) {
             withObservationTracking {
-                result = render()
+                (result, childBuilds) = gtkCollectingStatefulBuilds { render() }
             } onChange: { [weak self] in
                 guard let self else { return }
                 self.lock.lock()

@@ -111,21 +111,33 @@ private func winRenderStatefulView<V: View>(_ view: V, in context: RenderContext
     // through common-control/window-proc paths before `winRenderStatefulView`
     // returns, so relying on an outer modifier's temporary TLS push is not
     // stable enough for the host's full initial lifecycle.
-    let previousEnv = getCurrentEnvironment()
-    host.installEffectiveEnvironment()
+    //
+    // Inside a host's tracked body pass the body is built after that pass
+    // (see win32DeferStatefulBuild), with this point's navigation context.
+    let navigationContext = getCurrentNavigationContext()
+    let build = {
+        let previousNavigation = getCurrentNavigationContext()
+        setCurrentNavigationContext(navigationContext)
+        let previousEnv = getCurrentEnvironment()
+        host.installEffectiveEnvironment()
 
-    // Phase 6+7: track which storages are read during initial body evaluation
-    beginDependencyTracking()
-    let childHwnd = host.buildBodyWithTracking(containerContext)
-    if let tracking = endDependencyTracking() {
-        host.lastReadSet = tracking.readSet
-        host.lastInputSnapshot = tracking.snapshots
-    }
+        // Phase 6+7: track which storages are read during initial body evaluation
+        beginDependencyTracking()
+        let childHwnd = host.buildBodyWithTracking(containerContext)
+        if let tracking = endDependencyTracking() {
+            host.lastReadSet = tracking.readSet
+            host.lastInputSnapshot = tracking.snapshots
+        }
 
-    if let child = childHwnd {
-        host.addChild(child)
+        if let child = childHwnd {
+            host.addChild(child)
+        }
+        setCurrentEnvironment(previousEnv)
+        setCurrentNavigationContext(previousNavigation)
     }
-    setCurrentEnvironment(previousEnv)
+    if !win32DeferStatefulBuild(build) {
+        build()
+    }
     return host.container
 }
 
