@@ -4034,7 +4034,9 @@ extension Label: GTKRenderable {
         let box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
 
         if let iconName = systemImage {
-            let img = gtk_image_new_from_icon_name(iconName)!
+            // Same SF Symbols → Material path as Image(systemName:); the GTK
+            // icon theme doesn't know SF Symbol names.
+            let img = widgetFromOpaque(gtkRenderView(Image(systemName: iconName)))
             gtk_box_append(boxPointer(box), img)
         } else if let path = imagePath {
             let img = gtk_image_new_from_file(path)!

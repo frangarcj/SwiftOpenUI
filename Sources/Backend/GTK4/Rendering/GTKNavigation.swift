@@ -21,6 +21,16 @@ struct GTKNavigationEntry {
     var toolbarWidgets: [(widget: UnsafeMutablePointer<GtkWidget>, placement: ToolbarItemPlacement)] = []
 }
 
+/// Re-pushes one entry of a navigation stack onto a new context.
+typealias GTKNavigationRestore = (GTKNavigationContext) -> Void
+
+/// The pushed entries of a NavigationStack, kept by the owning view host so
+/// that the stack survives a rebuild of the view that contains it (a rebuild
+/// creates a new GtkStack with only the root).
+final class GTKNavigationMemory {
+    var entries: [GTKNavigationRestore] = []
+}
+
 /// Manages the navigation stack state for GTK4.
 /// Shared between NavigationStack and NavigationLink via thread-local capture at render time.
 class GTKNavigationContext {
@@ -39,6 +49,12 @@ class GTKNavigationContext {
     /// Guard against re-entrant sync between path and stack.
     private var isSyncing = false
 
+    /// Pushed entries kept across rebuilds, when the stack has an owning view host.
+    var memory: GTKNavigationMemory?
+
+    /// True while re-pushing remembered entries after a rebuild (no transition).
+    var isRestoring = false
+
     init(stack: OpaquePointer, headerBar: OpaquePointer, backButton: UnsafeMutablePointer<GtkWidget>) {
         self.stack = stack
         self.headerBar = headerBar
@@ -46,7 +62,18 @@ class GTKNavigationContext {
     }
 
     /// Push a new view onto the navigation stack.
-    func push(title: String, toolbarItems: [AnyToolbarItem] = [], content: @escaping () -> OpaquePointer) {
+    ///
+    /// `restore` re-creates this entry on a new context after a rebuild; pass it
+    /// when `content` cannot be called again (it returns an existing widget).
+    func push(
+        title: String,
+        toolbarItems: [AnyToolbarItem] = [],
+        restore: GTKNavigationRestore? = nil,
+        content: @escaping () -> OpaquePointer
+    ) {
+        memory?.entries.append(restore ?? { context in
+            context.push(title: title, toolbarItems: toolbarItems, content: content)
+        })
         let name = "nav-\(nameCounter)"
         nameCounter += 1
 
@@ -73,8 +100,9 @@ class GTKNavigationContext {
 
         entries.append(entry)
 
-        // Slide left for push
-        gtk_stack_set_transition_type(stack, GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT)
+        // Slide left for push (no transition when restoring after a rebuild)
+        gtk_stack_set_transition_type(
+            stack, isRestoring ? GTK_STACK_TRANSITION_TYPE_NONE : GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT)
         gtk_stack_set_visible_child_name(stack, name)
         updateHeaderBar()
     }
@@ -84,7 +112,9 @@ class GTKNavigationContext {
         guard let resolved = destinationRegistry.resolve(value) else { return }
 
         let title = resolved.title.isEmpty ? String(describing: value.base) : resolved.title
-        push(title: title, toolbarItems: resolved.toolbarItems) {
+        push(title: title, toolbarItems: resolved.toolbarItems, restore: { context in
+            context.pushValue(value)
+        }) {
             resolved.widget
         }
         syncPathAfterPush(value)
@@ -93,6 +123,9 @@ class GTKNavigationContext {
     /// Pop the top view from the navigation stack.
     func pop() {
         guard entries.count > 1 else { return }
+        if memory?.entries.isEmpty == false {
+            memory?.entries.removeLast()
+        }
 
         removeCurrentToolbarWidgets()
         let removed = entries.removeLast()
@@ -263,12 +296,32 @@ private func gtkExtractTitleAny(from view: Any, depth: Int = 0) -> String {
         }
     }
     for child in mirror.children {
-        if child.value is any View {
+        // Views, and the tuples/arrays a ViewBuilder stores several views in.
+        if child.value is any View || gtkIsViewContainer(child.value) {
             let result = gtkExtractTitleAny(from: child.value, depth: depth + 1)
             if !result.isEmpty { return result }
         }
     }
+    // A composite view (e.g. a destination `TaskDetailView`) sets its title in
+    // its body: look there too.
+    if let view = view as? any View, let body = gtkCompositeBody(of: view) {
+        return gtkExtractTitleAny(from: body, depth: depth + 1)
+    }
     return ""
+}
+
+/// Whether a stored value is a tuple or array a ViewBuilder keeps views in.
+private func gtkIsViewContainer(_ value: Any) -> Bool {
+    let style = Mirror(reflecting: value).displayStyle
+    return style == .tuple || style == .collection
+}
+
+/// The body of a composite view, or nil for primitive views.
+private func gtkCompositeBody<V: View>(of view: V) -> Any? {
+    if view is any PrimitiveView || V.Body.self == Never.self {
+        return nil
+    }
+    return view.body
 }
 
 // MARK: - Toolbar extraction
@@ -295,7 +348,7 @@ private func gtkExtractToolbarItemsAny(from view: Any, depth: Int = 0) -> [AnyTo
     }
 
     for child in mirror.children {
-        if child.value is any View {
+        if child.value is any View || gtkIsViewContainer(child.value) {
             let result = gtkExtractToolbarItemsAny(from: child.value, depth: depth + 1)
             if !result.isEmpty { return result }
         }
@@ -354,6 +407,13 @@ func gtkApplyToolbarConfiguration(
 
 extension NavigationStack: GTKRenderable {
     public func gtkCreateWidget() -> OpaquePointer {
+        // The owning view host keeps this stack's pushed entries by render
+        // position, so a rebuild of the containing view re-opens them. The key
+        // is taken before the content renders, so it doesn't depend on how
+        // many stateful children the content has.
+        let owner = GTKViewHost.getCurrentRebuilding()
+        let memoryKey = owner?.nextChildStateKey(type: "NavigationStack")
+
         // Create header bar
         let headerBar = gtk_header_bar_new()!
         let headerBarOp = OpaquePointer(headerBar)
@@ -459,6 +519,27 @@ extension NavigationStack: GTKRenderable {
             }
         }
 
+        // Re-open the entries pushed before a rebuild. A path-bound stack is
+        // restored from its path above instead.
+        if let owner, let memoryKey {
+            let memory = owner.navigationMemory[memoryKey] ?? GTKNavigationMemory()
+            owner.navigationMemory[memoryKey] = memory
+            let remembered = memory.entries
+            memory.entries = []
+            context.memory = memory
+            if pathBinding == nil, !remembered.isEmpty {
+                context.isRestoring = true
+                setCurrentNavigationContext(context)
+                setCurrentEnvironment(env)
+                for restore in remembered {
+                    restore(context)
+                }
+                setCurrentEnvironment(prevEnv)
+                setCurrentNavigationContext(nil)
+                context.isRestoring = false
+            }
+        }
+
         // Expose the header bar to Window via widget data
         g_object_ref(gpointer(headerBar))
         let stackObject = UnsafeMutableRawPointer(stack).assumingMemoryBound(to: GObject.self)
@@ -485,8 +566,35 @@ extension NavigationLink: GTKRenderable {
                 min-height: 0;
                 min-width: 0;
                 """)
+            // Buttons inside the label (e.g. a row's completion toggle) take
+            // their own clicks, as in SwiftUI.
+            gtk_swift_set_click_gestures_bubble(button)
         } else {
             button = gtk_button_new_with_label(label)!
+        }
+
+        // Value-based NavigationLink inside List(selection:) — select the value
+        // (sidebar behavior) instead of pushing it.
+        if let value = pushValue, let listSelection = getCurrentEnvironment().listSelection {
+            let box = Unmanaged.passRetained(ClosureBox {
+                listSelection.select(value)
+            }).toOpaque()
+
+            g_signal_connect_data(
+                gpointer(button),
+                "clicked",
+                unsafeBitCast({ (_: gpointer?, userData: gpointer?) in
+                    let box = Unmanaged<ClosureBox>.fromOpaque(userData!).takeUnretainedValue()
+                    box.closure()
+                } as @convention(c) (gpointer?, gpointer?) -> Void, to: GCallback.self),
+                box,
+                { (userData: gpointer?, _: UnsafeMutablePointer<GClosure>?) in
+                    Unmanaged<ClosureBox>.fromOpaque(userData!).release()
+                },
+                GConnectFlags(rawValue: 0)
+            )
+
+            return opaqueFromWidget(button)
         }
 
         // Capture context strongly at render time
@@ -540,14 +648,23 @@ extension NavigationLink: GTKRenderable {
             )
             setCurrentEnvironment(env)
             let destView = dest()
-            let extracted = gtkExtractTitle(from: destView)
-            let finalTitle = extracted.isEmpty ? destTitle : extracted
-            let rawItems = gtkExtractToolbarItems(from: destView)
-            let destConfig = gtkExtractToolbarConfiguration(from: destView)
-            let (toolbarItems, destHidden) = gtkApplyToolbarConfiguration(items: rawItems, configuration: destConfig)
-            context.push(title: finalTitle, toolbarItems: destHidden ? [] : toolbarItems) {
-                gtkRenderView(destView)
+            // Pushes the destination onto a context; also how the entry is
+            // re-created after a rebuild, so its title is re-read then.
+            func pushDestination(on context: GTKNavigationContext) {
+                let extracted = gtkExtractTitle(from: destView)
+                let finalTitle = extracted.isEmpty ? destTitle : extracted
+                let rawItems = gtkExtractToolbarItems(from: destView)
+                let destConfig = gtkExtractToolbarConfiguration(from: destView)
+                let (toolbarItems, destHidden) = gtkApplyToolbarConfiguration(items: rawItems, configuration: destConfig)
+                context.push(
+                    title: finalTitle,
+                    toolbarItems: destHidden ? [] : toolbarItems,
+                    restore: { pushDestination(on: $0) }
+                ) {
+                    gtkRenderView(destView)
+                }
             }
+            pushDestination(on: context)
             setCurrentEnvironment(prevEnv)
             setCurrentNavigationContext(nil)
         }).toOpaque()

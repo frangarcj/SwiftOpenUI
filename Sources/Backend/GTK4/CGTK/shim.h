@@ -100,6 +100,25 @@ gtk_swift_is_widget(GtkWidget *widget) {
     return widget != NULL && GTK_IS_WIDGET(widget);
 }
 
+/// Moves a widget's click gestures to the bubble phase. A GtkButton claims
+/// clicks in the capture phase, so a button containing another button (a
+/// NavigationLink row with a toggle button in its label) would swallow the
+/// inner button's clicks; in the bubble phase the inner button wins.
+static inline void
+gtk_swift_set_click_gestures_bubble(GtkWidget *widget) {
+    GListModel *controllers = gtk_widget_observe_controllers(widget);
+    guint count = g_list_model_get_n_items(controllers);
+    for (guint i = 0; i < count; i++) {
+        GObject *controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_GESTURE_CLICK(controller)) {
+            gtk_event_controller_set_propagation_phase(
+                GTK_EVENT_CONTROLLER(controller), GTK_PHASE_BUBBLE);
+        }
+        g_object_unref(controller);
+    }
+    g_object_unref(controllers);
+}
+
 static inline gboolean
 gtk_swift_is_label(GtkWidget *widget) {
     return widget != NULL && GTK_IS_LABEL(widget);
@@ -849,6 +868,16 @@ gtk_swift_set_root_window_titlebar(GtkWidget *widget, GtkWidget *titlebar) {
     if (root && GTK_IS_WINDOW(root)) {
         gtk_window_set_titlebar(GTK_WINDOW(root), titlebar);
     }
+}
+
+/// The titlebar of the window containing `widget`, or NULL.
+static inline GtkWidget *
+gtk_swift_get_root_window_titlebar(GtkWidget *widget) {
+    GtkRoot *root = gtk_widget_get_root(widget);
+    if (root && GTK_IS_WINDOW(root)) {
+        return gtk_window_get_titlebar(GTK_WINDOW(root));
+    }
+    return NULL;
 }
 
 // --- GtkSwitch shims ---

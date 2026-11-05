@@ -57,6 +57,10 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
     var childStateCache: [String: [AnyStateStorage]] = [:]
     private var childStatefulCounter = 0
 
+    /// Pushed entries of the NavigationStacks in this host's body, by the same
+    /// positional key, so a rebuild re-opens them instead of resetting to root.
+    var navigationMemory: [String: GTKNavigationMemory] = [:]
+
     /// Next positional key for a nested stateful child encountered during
     /// the current body pass. Called by `gtkRenderStatefulView` in render
     /// order; the counter resets at the start of each body evaluation.
@@ -354,6 +358,17 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
             oldRotation = getWidgetDouble(oldChild, key: "gtk-swift-rotation")
         }
 
+        // Whether the window's titlebar is a NavigationStack header bar from
+        // this host's old subtree: if the new subtree has none (e.g. a sidebar
+        // detail switched from a list with a NavigationStack to a plain view),
+        // the stale header bar must go.
+        var ownedWindowTitlebar = false
+        if let oldChild = gtk_widget_get_first_child(container),
+           let oldTitlebar = findTitlebarInRebuiltTree(oldChild),
+           let windowTitlebar = gtk_swift_get_root_window_titlebar(container) {
+            ownedWindowTitlebar = oldTitlebar == windowTitlebar
+        }
+
         // Remove old children
         while gtk_swift_is_widget(container) != 0, let child = gtk_widget_get_first_child(container) {
             gtk_box_remove(boxPointer(container), child)
@@ -401,6 +416,8 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
         // header bar that lives in a different subtree.
         if let titlebar = findTitlebarInRebuiltTree(newChild) {
             gtk_swift_set_root_window_titlebar(newChild, titlebar)
+        } else if ownedWindowTitlebar {
+            gtk_swift_set_root_window_titlebar(newChild, nil)
         }
 
         // Animate the transition: set old values, add CSS transition, then

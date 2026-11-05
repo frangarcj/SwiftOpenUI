@@ -508,6 +508,18 @@ extension NavigationStack: WinRenderable {
 
 extension NavigationLink: WinRenderable {
     public func winCreateWidget(in context: RenderContext) -> HWND? {
+        // Value-based NavigationLink inside List(selection:) — select the value
+        // (sidebar behavior) instead of pushing it.
+        if let value = pushValue, let listSelection = getCurrentEnvironment().listSelection {
+            let action = bindActionToCurrentEnvironment {
+                listSelection.select(value)
+            }
+            if label.isEmpty {
+                return createCustomLabelButton(label: labelView, action: action, context: context)
+            }
+            return createNativeButton(title: label, action: action, context: context)
+        }
+
         guard let navCtx = getCurrentNavigationContext() else {
             // Not inside a NavigationStack — render the label only.
             return winRenderView(labelView, in: context)
