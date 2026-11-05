@@ -1600,8 +1600,21 @@ private func makeMouseTransparent(_ hwnd: HWND) {
 
     var child = GetWindow(hwnd, UINT(GW_CHILD))
     while let c = child {
-        makeMouseTransparent(c)
+        // A control inside the label — a row's checkmark button inside a
+        // NavigationLink, say — keeps its own clicks, as in SwiftUI; the
+        // rest of the label passes clicks through to this container.
+        if !isInteractiveLabelControl(c) {
+            makeMouseTransparent(c)
+        }
         child = GetWindow(c, UINT(GW_HWNDNEXT))
+    }
+}
+
+/// Controls that handle their own mouse input when nested in a button label.
+private func isInteractiveLabelControl(_ hwnd: HWND) -> Bool {
+    switch win32ClassName(hwnd) {
+    case "SwiftUICustomButton", "Button", "Edit": return true
+    default: return false
     }
 }
 
