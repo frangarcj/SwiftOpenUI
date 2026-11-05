@@ -163,7 +163,8 @@ extension WindowGroup: Win32WindowRenderable {
 
         // Render the content view tree into the window
         let context = RenderContext(parent: hwnd, hInstance: hInstance)
-        if let contentHwnd = winRenderView(content, in: context) {
+        let rootHwnd = appRoot.map { winRenderView($0, in: context) } ?? winRenderView(content, in: context)
+        if let contentHwnd = rootHwnd {
             let contentRect: RECT = {
                 var rect = RECT()
                 GetWindowRect(contentHwnd, &rect)
@@ -790,7 +791,7 @@ public struct Win32Backend: RenderBackend {
         setCurrentEnvironment(env)
 
         let instance = A()
-        let scene = instance.body
+        let scene = appScene(instance)
         win32RenderScene(scene, hInstance: hInstance)
 
         // Hybrid Win32 + Foundation run loop.

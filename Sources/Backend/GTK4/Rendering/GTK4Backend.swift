@@ -105,7 +105,7 @@ extension WindowGroup: GTKWindowRenderable {
         wgEnv.windowID = Int(bitPattern: winPtr)
         setCurrentEnvironment(wgEnv)
 
-        let contentWidget = widgetFromOpaque(gtkRenderView(content))
+        let contentWidget = widgetFromOpaque(appRoot.map { gtkRenderView($0) } ?? gtkRenderView(content))
         if let titlebarWidget = findTitlebar(in: contentWidget) {
             gtk_window_set_titlebar(winPtr, titlebarWidget)
         }
@@ -595,7 +595,7 @@ public struct GTK4Backend: RenderBackend {
             setCurrentEnvironment(env)
 
             let instance = A()
-            gtkRenderScene(instance.body, app: appPtr)
+            gtkRenderScene(appScene(instance), app: appPtr)
         }
 
         let box = Unmanaged.passRetained(AppActivateBox(factory)).toOpaque()

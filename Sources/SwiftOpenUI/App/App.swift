@@ -1,3 +1,5 @@
+import Foundation
+
 /// A type that represents the structure and behavior of an app.
 ///
 /// Platform backends provide the concrete app lifecycle (GTK application,
@@ -32,9 +34,17 @@ public struct WindowGroup<Content: View>: Scene {
     public let windowSizing: WindowSizing?
     public let windowResizeBehavior: WindowResizeBehavior?
     public let windowResizability: WindowResizability?
+    /// Root view that re-evaluates the app's body, set when the app has state
+    /// (`@State` in the `App`). Backends render it instead of `content`.
+    public internal(set) var appRoot: AnyView?
 
     public init(_ title: String, @ViewBuilder content: () -> Content) {
         self.init(title: title, content: content())
+    }
+
+    /// SwiftUI's untitled `WindowGroup { ... }`: the window takes the process name.
+    public init(@ViewBuilder content: () -> Content) {
+        self.init(title: ProcessInfo.processInfo.processName, content: content())
     }
 
     init(

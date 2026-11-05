@@ -65,7 +65,7 @@ extension WindowGroup: WebWindowRenderable {
         container.style = .string(containerStyles)
 
         // Render content into DOM
-        let element = webRenderView(content)
+        let element = appRoot.map { webRenderView($0) } ?? webRenderView(content)
         _ = container.appendChild(element)
         _ = document.body.appendChild(container)
     }
@@ -77,7 +77,7 @@ public struct WebBackend: RenderBackend {
 
     public func run<A: App>(_ appType: A.Type) {
         let instance = A()
-        webRenderScene(instance.body)
+        webRenderScene(appScene(instance))
     }
 }
 
