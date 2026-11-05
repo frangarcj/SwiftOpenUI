@@ -6213,6 +6213,13 @@ extension DatePicker: GTKRenderable {
             GConnectFlags(rawValue: 0)
         )
 
+        // Hour and minute below the calendar (displayedComponents .hourAndMinute).
+        if let timeControls {
+            let timeWidget = widgetFromOpaque(gtkRenderView(timeControls))
+            gtk_widget_set_halign(timeWidget, GTK_ALIGN_START)
+            gtk_box_append(boxPtr, timeWidget)
+        }
+
         gtkApplyEnabledState(to: box)
         return opaqueFromWidget(box)
     }

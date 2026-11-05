@@ -1597,6 +1597,9 @@ private class CustomButtonInfo {
     let action: () -> Void
     let child: HWND?
     var pressed: Bool = false
+    /// Set while a WM_CONTEXTMENU is being offered to the label, so the copy
+    /// the label passes back up isn't offered again.
+    var offeringContextMenu = false
     init(action: @escaping () -> Void, child: HWND?) {
         self.action = action
         self.child = child
@@ -1698,6 +1701,20 @@ private let customButtonProc: SUBCLASSPROC = { (hwnd, uMsg, wParam, lParam, uIdS
                     info.action()
                 }
             }
+            return 0
+        }
+        return DefSubclassProc(hwnd, uMsg, wParam, lParam)
+
+    // --- Context menu of the label ---
+    // The label is mouse-transparent, so right-clicks land on the button and
+    // WM_CONTEXTMENU would only travel up, never reaching a .contextMenu on
+    // the label (e.g. a NavigationLink row). Offer it to the label first; if
+    // the label has no menu its copy comes back here and goes up as usual.
+    case UINT(WM_CONTEXTMENU):
+        if !info.offeringContextMenu, let child = info.child {
+            info.offeringContextMenu = true
+            _ = SendMessageW(child, uMsg, wParam, lParam)
+            info.offeringContextMenu = false
             return 0
         }
         return DefSubclassProc(hwnd, uMsg, wParam, lParam)
@@ -6417,6 +6434,19 @@ extension DatePicker: WinRenderable {
             let info = DatePickerNotifyInfo(selection: sel, onChange: cb, dtp: dtp)
             let infoPtr = Unmanaged.passRetained(info).toOpaque()
             SetWindowSubclass(container, datePickerNotifyProc, 43, DWORD_PTR(UInt(bitPattern: infoPtr)))
+        }
+
+        // Hour and minute to the right of the date (displayedComponents .hourAndMinute).
+        if let timeControls,
+           let timeHwnd = winRenderView(timeControls, in: RenderContext(parent: container, hInstance: context.hInstance)) {
+            var r = RECT()
+            GetWindowRect(timeHwnd, &r)
+            let timeW = r.right - r.left, timeH = r.bottom - r.top
+            let timeX = labelMeasured.width + px(8, for: context.parent) + px(150, for: context.parent)
+                + px(8, for: context.parent)
+            SetWindowPos(timeHwnd, nil, timeX, 0, timeW, timeH, UINT(SWP_NOZORDER))
+            SetWindowPos(container, nil, 0, 0, timeX + timeW, max(px(24, for: context.parent), timeH),
+                         UINT(SWP_NOZORDER | SWP_NOMOVE))
         }
         return container
     }
