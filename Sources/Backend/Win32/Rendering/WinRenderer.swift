@@ -5255,7 +5255,7 @@ extension Form: WinRenderable {
         // a Spacer in an HStack isn't squeezed to its content.
         let formView = VStack(alignment: .leading, spacing: 8) { content }
             .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         return winRenderView(formView, in: context)
     }
 }
@@ -10294,33 +10294,11 @@ extension DrawingContext {
 
 extension ViewList: WinRenderable {
     public func winCreateWidget(in context: RenderContext) -> HWND? {
-        registerStackClassIfNeeded(hInstance: context.hInstance)
-
-        let container = CreateWindowExW(
-            0, stackContainerClassName, nil,
-            DWORD(WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN),
-            0, 0, 0, 0,
-            context.parent, nil, context.hInstance, nil
-        )!
-
-        let childContext = RenderContext(parent: container, hInstance: context.hInstance)
-        var y: Int32 = 0
-        var maxW: Int32 = 0
-
-        for child in children {
-            if let hwnd = winRenderAnyView(child, in: childContext) {
-                var r = RECT()
-                GetWindowRect(hwnd, &r)
-                let w = r.right - r.left
-                let h = r.bottom - r.top
-                SetWindowPos(hwnd, nil, 0, y, w, h, UINT(SWP_NOZORDER))
-                y += h
-                maxW = max(maxW, w)
-            }
-        }
-
-        SetWindowPos(container, nil, 0, 0, maxW, y, UINT(SWP_NOZORDER | SWP_NOMOVE))
-        return container
+        // Several views at the root of a body (e.g. `HStack { ... }` followed
+        // by `Spacer()`) are laid out like SwiftUI's implicit VStack: a real
+        // stack, so flexible children (spacers, `.frame(maxWidth: .infinity)`)
+        // share the space instead of keeping their natural size.
+        winRenderView(VStack { self }, in: context)
     }
 }
 

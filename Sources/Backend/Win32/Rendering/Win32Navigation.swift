@@ -380,7 +380,10 @@ private func layoutNavContainer(_ ctx: Win32NavigationContext) {
     SetWindowPos(ctx.headerContainer, nil, 0, 0, w, headerHeight, UINT(SWP_NOZORDER))
 
     // Layout back button (child of headerContainer)
-    let backVisible = IsWindowVisible(ctx.backButton) != false
+    // From the stack depth, not IsWindowVisible: that is false while the
+    // window is still being built (e.g. entries re-opened after a rebuild),
+    // which left the back button unplaced.
+    let backVisible = ctx.entries.count > 1
     let backWidth: Int32 = backVisible ? measureBackButton(ctx: ctx) + Int32((16 * dpiScale).rounded()) : 0
     let inset = Int32((4 * dpiScale).rounded())
     if backVisible {
