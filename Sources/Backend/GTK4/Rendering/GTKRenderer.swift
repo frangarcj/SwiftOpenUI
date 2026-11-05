@@ -6736,9 +6736,27 @@ extension ToolbarItem: GTKRenderable {
 
 extension ToolbarView: GTKRenderable {
     public func gtkCreateWidget() -> OpaquePointer {
-        // Render the content; toolbar items are extracted by NavigationStack
-        // via the ToolbarProvider protocol during header bar construction.
-        gtkRenderView(content)
+        // Inside a NavigationStack, the stack extracts the toolbar items via
+        // the ToolbarProvider protocol when it builds its header bar.
+        let widget = gtkRenderView(content)
+        guard !gtkIsInsideNavigationStack() else { return widget }
+
+        // Outside one, the items go to the window's header bar, as SwiftUI puts
+        // them in the window toolbar on macOS.
+        let (items, hidden) = gtkApplyToolbarConfiguration(
+            items: toolbarItems, configuration: toolbarConfiguration)
+        guard !hidden, !items.isEmpty else { return widget }
+        let headerBar = gtkWindowHeaderBar(attachedTo: widgetFromOpaque(widget))
+        for item in items {
+            let itemWidget = widgetFromOpaque(gtkRenderAnyView(item.wrapped))
+            switch item.placement {
+            case .leading:
+                gtk_header_bar_pack_start(headerBar, itemWidget)
+            case .primaryAction, .trailing:
+                gtk_header_bar_pack_end(headerBar, itemWidget)
+            }
+        }
+        return widget
     }
 }
 

@@ -164,6 +164,16 @@ extension ToolbarContentBuilder {
     }
 }
 
+// MARK: - Accent color
+
+extension Color {
+    /// The app's accent color (the system blue, as in SwiftUI's default).
+    public static var accentColor: Color { Color(red: 0.0, green: 0.48, blue: 1.0) }
+
+    /// SwiftUI's `.tint` style, as in `.foregroundStyle(.tint)` (Xcode's app template).
+    public static var tint: Color { accentColor }
+}
+
 // MARK: - View labels
 
 extension Toggle {

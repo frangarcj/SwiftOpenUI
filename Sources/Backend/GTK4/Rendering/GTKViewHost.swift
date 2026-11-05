@@ -92,8 +92,14 @@ public class GTKViewHost: AnyViewHost, DependencyTrackingHost {
         setCurrentEnvironment(env)
     }
 
+    /// Whether this host was created inside a NavigationStack, so its rebuilds
+    /// (which run without the stack's render context) still know the stack
+    /// provides the header bar.
+    let createdInsideNavigation: Bool
+
     public init(buildBody: @escaping () -> OpaquePointer) {
         self.buildBody = buildBody
+        self.createdInsideNavigation = gtkIsInsideNavigationStack()
         self.capturedEnvironment = getCurrentEnvironment()
         let box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
         self.container = box

@@ -723,8 +723,39 @@ extension NavigationDestinationModifier: GTKRenderable {
 
 extension TitledView: GTKRenderable {
     public func gtkCreateWidget() -> OpaquePointer {
-        gtkRenderView(content)
+        let widget = gtkRenderView(content)
+        // Outside a NavigationStack the title goes to the window's header bar,
+        // as SwiftUI shows it in the window title on macOS.
+        if !gtkIsInsideNavigationStack() {
+            let headerBar = gtkWindowHeaderBar(attachedTo: widgetFromOpaque(widget))
+            gtk_header_bar_set_title_widget(headerBar, gtk_label_new(navigationTitle))
+        }
+        return widget
     }
+}
+
+/// Whether the view being rendered is inside a NavigationStack, which then
+/// owns the header bar (title and toolbar items).
+func gtkIsInsideNavigationStack() -> Bool {
+    getCurrentNavigationContext() != nil
+        || (GTKViewHost.getCurrentRebuilding()?.createdInsideNavigation ?? false)
+}
+
+/// The header bar a view outside any NavigationStack puts its title and toolbar
+/// items in. It is attached to the view's widget like a NavigationStack's, so
+/// the window (and a rebuild of the containing view host) installs it as the
+/// window titlebar.
+func gtkWindowHeaderBar(attachedTo widget: UnsafeMutablePointer<GtkWidget>) -> OpaquePointer {
+    let gobject = UnsafeMutableRawPointer(widget).assumingMemoryBound(to: GObject.self)
+    if let existing = g_object_get_data(gobject, "gtk-swift-window-titlebar") {
+        return OpaquePointer(existing)
+    }
+    let headerBar = gtk_header_bar_new()!
+    g_object_ref(gpointer(headerBar))
+    g_object_set_data_full(gobject, "gtk-swift-window-titlebar", headerBar, { userData in
+        g_object_unref(userData)
+    })
+    return OpaquePointer(headerBar)
 }
 
 // MARK: - NavigationSplitView GTK extension

@@ -122,6 +122,7 @@ public enum SFSymbolCompatibility {
         // MARK: UI primitives
         "bell":                   "notifications",
         "bell.fill":              "notifications",
+        "globe":                  "globe",
         "bookmark":               "bookmark",
         "books.vertical":         "library_books",
         "books.vertical.fill":    "library_books",
