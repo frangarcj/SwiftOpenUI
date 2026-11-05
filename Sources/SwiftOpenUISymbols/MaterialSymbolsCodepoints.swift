@@ -68,6 +68,8 @@ public enum MaterialSymbolsCodepoints {
         "cancel":              0xE5C9,
         "check":               0xE5CA,
         "check_circle":        0xE86C,
+        "checklist":           0xE6B1,
+        "circle":              0xEF4A,
         "close":               0xE5CD,
         "help_outline":        0xE8FD,
         "info":                0xE88E,
