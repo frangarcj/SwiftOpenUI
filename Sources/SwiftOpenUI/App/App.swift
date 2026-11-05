@@ -42,9 +42,13 @@ public struct WindowGroup<Content: View>: Scene {
         self.init(title: title, content: content())
     }
 
-    /// SwiftUI's untitled `WindowGroup { ... }`: the window takes the process name.
+    /// SwiftUI's untitled `WindowGroup { ... }`: the window takes the app name
+    /// (the process name without the `.exe` it has on Windows).
     public init(@ViewBuilder content: () -> Content) {
-        self.init(title: ProcessInfo.processInfo.processName, content: content())
+        let processName = ProcessInfo.processInfo.processName
+        let appName = processName.lowercased().hasSuffix(".exe")
+            ? String(processName.dropLast(4)) : processName
+        self.init(title: appName, content: content())
     }
 
     init(
