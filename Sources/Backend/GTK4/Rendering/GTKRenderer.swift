@@ -6754,7 +6754,7 @@ extension ToolbarView: GTKRenderable {
             items: toolbarItems, configuration: toolbarConfiguration)
         guard !hidden, !items.isEmpty else { return widget }
         let headerBar = gtkWindowHeaderBar(attachedTo: widgetFromOpaque(widget))
-        for item in items {
+        for item in gtkHeaderBarPackingOrder(items, \.placement) {
             let itemWidget = widgetFromOpaque(gtkRenderAnyView(item.wrapped))
             switch item.placement {
             case .leading:

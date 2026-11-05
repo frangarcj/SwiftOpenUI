@@ -86,7 +86,7 @@ class GTKNavigationContext {
         var entry = GTKNavigationEntry(title: title, name: name, widget: widget)
 
         // Install new toolbar items into header bar
-        for item in toolbarItems {
+        for item in gtkHeaderBarPackingOrder(toolbarItems, \.placement) {
             let itemWidget = widgetFromOpaque(gtkRenderAnyView(item.wrapped))
             switch item.placement {
             case .leading:
@@ -482,7 +482,7 @@ extension NavigationStack: GTKRenderable {
         let (toolbarItems, toolbarHidden) = gtkApplyToolbarConfiguration(items: rawToolbarItems, configuration: toolbarConfig)
         var rootEntry = GTKNavigationEntry(title: title, name: "nav-root", widget: rootWidget)
         if !toolbarHidden {
-        for item in toolbarItems {
+        for item in gtkHeaderBarPackingOrder(toolbarItems, \.placement) {
             let itemWidget = widgetFromOpaque(gtkRenderAnyView(item.wrapped))
             switch item.placement {
             case .leading:
@@ -803,7 +803,7 @@ private func gtkInstallToolbar<V: View>(from view: V, on widget: UnsafeMutablePo
     let headerBar = gtk_header_bar_new()!
     let headerBarOp = OpaquePointer(headerBar)
     gtk_header_bar_set_title_widget(headerBarOp, gtk_label_new(""))
-    for item in toolbarItems {
+    for item in gtkHeaderBarPackingOrder(toolbarItems, \.placement) {
         let itemWidget = widgetFromOpaque(gtkRenderAnyView(item.wrapped))
         switch item.placement {
         case .leading:
@@ -944,4 +944,12 @@ extension NavigationSplitViewColumnWidthView: GTKRenderable {
         }
         return opaqueFromWidget(widget)
     }
+}
+
+/// `gtk_header_bar_pack_end` places each widget to the left of the previous
+/// one, so trailing items are packed in reverse to show them in the order they
+/// were declared, as SwiftUI does.
+func gtkHeaderBarPackingOrder<T>(_ items: [T], _ placement: KeyPath<T, ToolbarItemPlacement>) -> [T] {
+    items.filter { $0[keyPath: placement] == .leading }
+        + items.filter { $0[keyPath: placement] != .leading }.reversed()
 }

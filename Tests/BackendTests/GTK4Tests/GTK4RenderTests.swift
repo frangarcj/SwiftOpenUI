@@ -1487,6 +1487,20 @@ final class GTK4RenderTests: XCTestCase {
         XCTAssertEqual(items[2].placement, .primaryAction)
     }
 
+    func testHeaderBarPacksTrailingItemsInReverse() {
+        // pack_end puts each widget left of the previous one: packing the
+        // trailing items in reverse shows them in declaration order.
+        struct Item { let name: String; let placement: ToolbarItemPlacement }
+        let items = [
+            Item(name: "A", placement: .trailing),
+            Item(name: "L", placement: .leading),
+            Item(name: "B", placement: .primaryAction),
+            Item(name: "C", placement: .trailing),
+        ]
+        let packed = gtkHeaderBarPackingOrder(items, \.placement).map(\.name)
+        XCTAssertEqual(packed, ["L", "C", "B", "A"])
+    }
+
     func testToolbarWithIdExtractsItems() throws {
         try requireGTK()
 
