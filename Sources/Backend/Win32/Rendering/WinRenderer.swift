@@ -6436,16 +6436,18 @@ extension DatePicker: WinRenderable {
             SetWindowSubclass(container, datePickerNotifyProc, 43, DWORD_PTR(UInt(bitPattern: infoPtr)))
         }
 
-        // Hour and minute to the right of the date (displayedComponents .hourAndMinute).
+        // Hour and minute under the date control (displayedComponents
+        // .hourAndMinute), so the picker doesn't get wider than a form column.
         if let timeControls,
            let timeHwnd = winRenderView(timeControls, in: RenderContext(parent: container, hInstance: context.hInstance)) {
             var r = RECT()
             GetWindowRect(timeHwnd, &r)
             let timeW = r.right - r.left, timeH = r.bottom - r.top
-            let timeX = labelMeasured.width + px(8, for: context.parent) + px(150, for: context.parent)
-                + px(8, for: context.parent)
-            SetWindowPos(timeHwnd, nil, timeX, 0, timeW, timeH, UINT(SWP_NOZORDER))
-            SetWindowPos(container, nil, 0, 0, timeX + timeW, max(px(24, for: context.parent), timeH),
+            let timeX = labelMeasured.width + px(8, for: context.parent)
+            let timeY = px(24, for: context.parent) + px(4, for: context.parent)
+            SetWindowPos(timeHwnd, nil, timeX, timeY, timeW, timeH, UINT(SWP_NOZORDER))
+            SetWindowPos(container, nil, 0, 0,
+                         max(px(250, for: context.parent), timeX + timeW), timeY + timeH,
                          UINT(SWP_NOZORDER | SWP_NOMOVE))
         }
         return container
