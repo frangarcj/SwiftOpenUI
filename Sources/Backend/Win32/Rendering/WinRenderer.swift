@@ -8918,8 +8918,9 @@ private let contextMenuProc: SUBCLASSPROC = { (hwnd, uMsg, wParam, lParam, uIdSu
         // TPM_RETURNCMD: the chosen item comes back as the return value. Without
         // it the item's WM_COMMAND is posted and arrives after this returns,
         // when the actions are gone, so choosing an item did nothing.
+        // (Through the C shim: Swift imports TrackPopupMenu's result as Bool.)
         let flags = UINT(TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON)
-        let selected = TrackPopupMenu(hmenu, flags, pt.x, pt.y, 0, hwnd, nil)
+        let selected = win32_TrackPopupMenuReturnCmd(hmenu, flags, pt.x, pt.y, hwnd)
         win32Trace("context menu at (\(pt.x),\(pt.y)) items=\(actions.count) selected=\(selected) lastError=\(GetLastError())")
         DestroyMenu(hmenu)
         if selected != 0, let action = actions[UINT(selected)] {
