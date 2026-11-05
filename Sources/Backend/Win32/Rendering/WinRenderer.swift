@@ -4618,12 +4618,15 @@ extension ProgressView: WinRenderable {
 
 extension Label: WinRenderable {
     public func winCreateWidget(in context: RenderContext) -> HWND? {
-        let displayText: String
+        // With an icon: the icon (SF Symbols -> Material glyph, as in
+        // Image(systemName:)) next to the title, like SwiftUI's Label.
         if let icon = systemImage {
-            displayText = "[\(icon)] \(title)"
-        } else {
-            displayText = title
+            return winRenderView(HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title)
+            }, in: context)
         }
+        let displayText = title
         let measured = measureText(displayText, hwnd: context.parent)
         return displayText.withCString(encodedAs: UTF16.self) { wstr in
             win32_CreateChildWindow(
