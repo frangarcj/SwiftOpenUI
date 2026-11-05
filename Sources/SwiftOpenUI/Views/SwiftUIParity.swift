@@ -9,8 +9,11 @@ import Foundation
 extension ForEach {
     /// SwiftUI's `ForEach($items) { $item in ... }`.
     ///
-    /// Each element binding follows its element by `id`, so a row that is
-    /// still on screen while the collection shrinks reads a valid element.
+    /// Each element binding follows its element by `id`. A row built from an
+    /// outdated ForEach (backends may build rows lazily, after the collection
+    /// changed) whose element no longer exists reads the element now at its
+    /// position, so it always gets an element of the current collection; the
+    /// last value read is only the fallback for a position past the end.
     public init<C>(
         _ data: Binding<C>,
         @ViewBuilder content: @escaping (Binding<C.Element>) -> Content
@@ -29,6 +32,8 @@ extension ForEach {
                         last.value = items[index]
                     } else if let found = items.first(where: { $0.id == id }) {
                         last.value = found
+                    } else if items.indices.contains(index) {
+                        last.value = items[index]
                     }
                     return last.value
                 },
