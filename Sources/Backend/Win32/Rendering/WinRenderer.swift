@@ -8873,7 +8873,11 @@ extension ContextMenuView: WinRenderable {
 
 private let contextMenuProc: SUBCLASSPROC = { (hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) in
     switch uMsg {
-    case UINT(WM_RBUTTONUP):
+    // WM_CONTEXTMENU, not WM_RBUTTONUP: mouse messages go to the innermost
+    // child under the cursor (e.g. a row's text), while a child that shows no
+    // menu passes WM_CONTEXTMENU up to its parent, so right-clicking anywhere
+    // in the view reaches this handler. It also covers Shift+F10 / menu key.
+    case UINT(WM_CONTEXTMENU):
         let statePtr = UnsafeMutableRawPointer(bitPattern: UInt(dwRefData))!
         let state = Unmanaged<ContextMenuState>.fromOpaque(statePtr).takeUnretainedValue()
 
